@@ -1,0 +1,13 @@
+pandas
+requests
+pydantic
+lxml
+pymupdf
+mistralai
+fastapi
+pytest
+pytest-asyncio
+pandas
+httpx
+uvicorn
+openpyxl
