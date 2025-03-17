@@ -1,6 +1,10 @@
 import logging
 import re
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, Any, List
+
+import fitz
+import numpy as np
+from PIL import Image
 
 from pipeline.config.run_configuration import RunConfiguration
 from pipeline.transform.base_ocr_reader import BaseOCRReader
@@ -30,7 +34,7 @@ class PdfTransformer(BaseTransformer):
             'full_legal_name': self._extract_full_legal_name(full_text),
             'address': self._extract_address(full_text),
             'phone_number': self._extract_phone_number(full_text),
-            'compensation_arrangements': self._extract_compensation_arrangements(full_text),
+            'compensation_arrangements': self._extract_compensation_arrangements(pdf_path),
             'employee_count': self._extract_investment_advisory_employee_count(full_text),
             'client_types': self._extract_client_types(full_text),
             'private_funds': self._extract_private_funds_and_ids(full_text),
@@ -199,33 +203,58 @@ class PdfTransformer(BaseTransformer):
 
         return ', '.join(address_parts)
 
-    def _extract_compensation_arrangements(self, text: str) -> List[str]:
-        """Extract compensation arrangements"""
-        section_pattern = r'Item 5 Information.*?Describe your compensation arrangements(.*?)(?:Item 6|$)'
-        section_match = re.search(section_pattern, text, re.DOTALL | re.IGNORECASE)
+    def _is_checkbox_checked(self, page, rect, threshold=150):
+        """Determine if a checkbox is checked based on pixel intensity."""
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=rect, colorspace="gray")  # High-res grayscale
+        img = Image.frombytes("L", [pix.width, pix.height], pix.samples)  # Convert to PIL
+        img_array = np.array(img)  # Convert to NumPy
 
-        if not section_match:
-            self.logger.warning("Compensation arrangements section not found.")
-            return []
+        # Determine black pixel ratio
+        return np.sum(img_array < threshold) / img_array.size > 0.12  # Adjust sensitivity if needed
 
-        compensation_section = section_match.group(1)
-        arrangements = []
-        patterns = {
-            r'[Pp]ercentage of assets': 'Percentage of AUM',
-            r'[Pp]erformance.based': 'Performance-based fees',
-            r'[Hh]ourly charges': 'Hourly charges',
-            r'[Ss]ubscription fees': 'Subscription fees',
-            r'[Ff]ixed fees': 'Fixed fees',
-            r'[Cc]ommissions': 'Commissions',
-            r'A percentage of assets under management': 'Percentage of AUM',
-            r'Performance-based fees': 'Performance-based fees'
+    def _extract_compensation_arrangements(self, pdf_path: str) -> List[str]:
+        doc = fitz.open(pdf_path)
+        page = None
+        for page_num in range(len(doc)):
+            target_page = doc[page_num]
+            found_rects = target_page.search_for("Compensation Arrangements")
+            if found_rects:
+                page = target_page
+                break  # Stop at the first occurrence
+
+        compensation_options = {
+            "A percentage of assets under your management": "(1)",
+            "Hourly charges": "(2)",
+            "Subscription fees (for a newsletter or periodical)": "(3)",
+            "Fixed fees (other than subscription fees)": "(4)",
+            "Commissions": "(5)",
+            "Performance-based fees": "(6)",
+            "Other (specify):": "(7)"
         }
 
-        for pattern, description in patterns.items():
-            if re.search(pattern, compensation_section, re.IGNORECASE):
-                arrangements.append(description)
+        checked_options = []
 
-        return arrangements
+        for label, option_number in compensation_options.items():
+            rects = page.search_for(label)
+            if not rects:
+                continue
+
+            label_rect = rects[0]
+            checkbox_rect = fitz.Rect(label_rect.x0 - 44, label_rect.y0 + 1, label_rect.x0 - 38, label_rect.y1 - 1)
+
+            # Draw rectangles to visualize
+            # page.draw_rect(label_rect, color=(1, 0, 0), width=0.5)  # Red for labels
+            # page.draw_rect(checkbox_rect, color=(0, 1, 0), width=1.0)  # Green for checkboxes
+
+            if self._is_checkbox_checked(page, checkbox_rect):
+                checked_options.append(label)
+
+        # for debugging pixel map
+        # pix = page.get_pixmap()
+        # img = Image.open(io.BytesIO(pix.tobytes()))
+        # img.save("test.png")
+
+        return checked_options
 
     def _extract_client_types(self, text: str) -> dict:
         """Extract types of clients served and their AUM"""
