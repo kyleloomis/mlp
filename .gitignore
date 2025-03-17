@@ -48,6 +48,3 @@ testem.log
 # System Files
 .DS_Store
 Thumbs.db
-
-# resources
-/resources/algora-labs-algora-gcs.json
