@@ -1,9 +1,7 @@
 import logging
-from typing import List
 
 from fastapi import FastAPI, HTTPException, Query
 
-from api.models import FirmResponse
 from pipeline.config.run_configuration import RunConfiguration
 from pipeline.sink.database_sink import DatabaseSink
 
